@@ -1,6 +1,8 @@
 'use strict';
 
+const _ = require('lodash');
 const util = require('util');
+const untyped = require('untyped');
 const {Observable} = require('rxjs/Observable');
 
 require('rxjs/add/observable/fromPromise');
@@ -11,31 +13,12 @@ require('rxjs/add/operator/timeout');
 require('rxjs/add/operator/concatMap');
 require('rxjs/add/operator/mergeMap');
 
-/**
- * isNullOrEmpty control
- */
-function isNullOrEmpty(item) {
-    if (item === null || item === undefined) {
-        return true;
-    }
-    else if (typeof item === 'string') {
-        return item === '';
-    }
-    else if (Array.isArray(item)) {
-        return item.length === 0;
-    }
-    else {
-        return JSON.stringify(item) === '{}';
-    }
-}
 
 /**
  * parse key-value
  */
 let toWhere = function(key, value) {
-    let where = {};
-    where[key] = value;
-    return {where};
+    return _.set({}, key, value);
 };
 
 /**
@@ -50,40 +33,16 @@ const Objectify = (function() {
 }());
 
 /**
- * Implementation of SQuery for ?select=x,y,z
+ * Implementation of SQuery for ?fields=x,y,z
  */
 const Selectify = (function() {
     function Selectify() {}
 
     Selectify.prototype.on = function(req, data) {
-        let properties = this.selects(req);
-
-        if (properties) {
-            if (Array.isArray(data)) {
-                return data.map(entity => this.filter(properties, entity));
-            }
-            return this.filter(properties, data);
+        if (req.query.fields) {
+            return untyped.validate(data, untyped.parse(req.query.fields));
         }
-
         return data;
-    };
-
-    /**
-     * select properties from query of request.
-     */
-    Selectify.prototype.selects = function(req) {
-        return (req.query.select || '').split(',').map(select => select.trim());
-    };
-
-    /**
-     * filter object with properties found.
-     */
-    Selectify.prototype.filter = function(properties, entity) {
-        let filtered = {};
-
-        properties.forEach(property => (filtered[property] = entity[property]));
-
-        return isNullOrEmpty(filtered) ? entity : filtered;
     };
 
     return Selectify;
@@ -178,24 +137,24 @@ const Urlify = (function() {
 
         let collection = req.url.split('/').map(d => d.trim());
 
-        if (!isNullOrEmpty(req.query)) {
+        if (!_.isEmpty(req.query)) {
             // if url has any kind of query then we split it before we format content (index 0 was problem, it should be index 1)
             let pathCollection = collection[1].split('?').map(d => d.trim());
 
-            // detail object might contain only select query for filtering on properties.
-            if (req.query.select) {
-                return url.concat('/', pathCollection[0], '/', data.id.toString(), '?select=', req.query.select);
+            // detail object might contain only fields query for filtering on properties.
+            if (req.query.fields) {
+                return url.concat('/', pathCollection[0], '/', data.id, '?fields=', req.query.fields);
             }
 
-            return url.concat('/', pathCollection[0], '/', data.id.toString());
+            return url.concat('/', pathCollection[0], '/', data.id);
         }
 
         // if this object is already in detail context in use.
-        if (req.url.indexOf('/'.concat(data.id.toString())) !== -1) {
+        if (req.url.indexOf('/'.concat(data.id)) !== -1) {
             return url.concat(req.url);
         }
 
-        return url.concat(req.url, '/', data.id.toString());
+        return url.concat(req.url, '/', data.id);
     };
 
     /**
@@ -270,14 +229,75 @@ const All = (function() {
 
     All.prototype.on = function(req, res, model) {
         let served = false;
-        let limit = parseInt(req.query.limit || 25); // defults for 'limit'
-        let offset = parseInt(req.query.offset || 0); // defults for 'offset'
-
-        let query = model.all({
-            limit: limit,
-            offset: offset,
+        let where = {};
+        let options = {
+            limit: parseInt(req.query.limit || 25),
+            offset: parseInt(req.query.offset || 0),
             include: model.map || []
-        }).catch(function(error) {
+        };
+
+        // ?:field=
+        _.keys(_.omit(model.attributes, 'createdAt', 'updatedAt')).forEach(function(attribute) {
+            ['', '~', '|', '^', '$', '*'].forEach(function(match) {
+                let queryparam = attribute + match;
+
+                if (queryparam in req.query) {
+                    let value = req.query[queryparam];
+
+                    switch (match) {
+                        case '':
+                            // exact match
+                            where[attribute] = value;
+                            break;
+
+                        case '~':
+                            // oneof match
+                            where[attribute] = {
+                                'in': value.split(',')
+                            };
+                            break;
+
+                        case '|':
+                            // prefix-/exact match
+                            where[attribute] = {
+                                like: value + '%'
+                            };
+                            break;
+
+                        case '^':
+                            // startswith match
+                            where[attribute] = {
+                                like: value + '%'
+                            };
+                            break;
+
+                        case '$':
+                            // endswith match
+                            where[attribute] = {
+                                like: '%' + value
+                            };
+                            break;
+
+                        case '*':
+                            // contains match
+                            where[attribute] = {
+                                like: '%' + value + '%'
+                            };
+                            break;
+                    }
+                }
+            });
+        });
+
+        if (!_.isEmpty(where)) {
+            options.where = where;
+        }
+
+        if ('fields' in req.query) {
+            options.attributes = _.keys(untyped.parse(req.query.fields)).concat(['id']);
+        }
+
+        let query = model.all(options).catch(function(error) {
             served = true;
             res.json({
                 status: 400,
@@ -336,7 +356,7 @@ const Detail = (function() {
     function Detail() {}
 
     Detail.prototype.on = function(req, res, model) {
-        let objectId = parseInt(req.params.id || 0);
+        let objectId = req.params.id;
 
         if (!objectId) {
             throw {
@@ -347,13 +367,18 @@ const Detail = (function() {
         }
 
         let served = false;
-        let where = toWhere(model.primaryKeyName || 'id', objectId);
+        let options = {};
 
         if (model.map) {
-            where.include = model.map;
+            options.include = model.map;
         }
 
-        let query = model.find(where).catch(function(error) {
+        // ?fields=
+        if ('fields' in req.query) {
+            options.attributes = _.uniq(_.keys(untyped.parse(req.query.fields)).concat(['id']));
+        }
+
+        let query = model.findById(objectId, options).catch(function(error) {
                 served = true;
                 res.json({
                     status: 400,
@@ -365,7 +390,8 @@ const Detail = (function() {
         Observable.fromPromise(query)
             .map(entity => objectify.on(entity))
             .mergeMap(function(entity) {
-                if (isNullOrEmpty(entity)) {
+
+                if (_.isEmpty(entity)) {
                     res.json({
                         code: 400,
                         message: 'no such object exists.',
@@ -407,9 +433,9 @@ const Create = (function() {
     function Create() {}
 
     Create.prototype.on = function(req, res, model) {
-        let object = req.body || {};
+        let object = req.body;
 
-        if (isNullOrEmpty(object)) {
+        if (_.isEmpty(object)) {
             throw {
                 status: 400,
                 message: 'invalid object',
@@ -460,9 +486,9 @@ const Update = (function() {
 
     Update.prototype.on = function(req, res, model) {
         let objectId = parseInt(req.params.id || 0);
-        let object = (req.body || {});
+        let object = req.body;
 
-        if (!objectId && isNullOrEmpty(object)) {
+        if (!objectId && _.isEmpty(object)) {
             throw {
                 status: 400,
                 message: 'no such object exists.',

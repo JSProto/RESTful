@@ -17,9 +17,11 @@
   "author": "Fatih ŞEN",
   "license": "MIT",
   "dependencies": {
-    "express": "^4.15.2",
-    "rxjs": "^5.2.0",
-    "sequelize": "^3.30.4"
+    "express": "^4.15.4",
+    "lodash": "^4.17.4",
+    "rxjs": "^5.4.3",
+    "sequelize": "^4.8.4",
+    "untyped": "^0.1.0"
   },
   "devDependencies": {}
 }
