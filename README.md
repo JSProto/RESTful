@@ -12,88 +12,112 @@ Documentation for `express` or `sequelize`
 [Express](https://expressjs.com/en/4x/api.html) or [Sequelize](http://sequelize.readthedocs.io/en/v3/)
 
 
-(PS: for database example check [model](https://github.com/droideveloper/RESTful#models))
+(PS: for database example check [model](#models))
 
 in your server.js or index.js file;
 
 ```javascript
 //imports
-var express = require("express");
-var bodyParser = require("body-parser");
-var gzip = require("compression");
-var context = require("restful-express-sequelize");
+const express = require('express');
+const bodyParser = require('body-parser');
+const gzip = require('compression');
+const restful = require('restful-express-sequelize');
+
 // model generted by sequelize-cli
-// (sequelize model:create --name Framework --attributes name:string,lang:string)
-var dbContext = require("./models");
+// (sequelize model:create --name country --attributes name:string,lang:string)
+const db = require('./models');
+
 // bind over ip and port instead of 127.0.0.1
-var port = process.env.PORT || 52192;
-var host = process.env.HOST || "192.168.1.100";
+const port = process.env.PORT || 8080;
+const host = process.env.HOST || '192.168.1.100';
+
 // express instance
-var server = express();
+const server = express();
+
 // register body-parser middleware
 server.use(bodyParser.json());
-server.use(bodyParser.urlencoded({ extended: true }));
+server.use(bodyParser.urlencoded({
+    extended: true
+}));
+
 // register compression middleware
-server.use(gzip({ filter: function (req, res) {
-  return !req.headers["x-no-gzip"];
-}}));
+server.use(gzip({
+    filter: function(req, res) {
+        return !req.headers['x-no-gzip'];
+    }
+}));
 
 // get items from models
-var models = [];
-for (var property in dbContext) {
-  // register as options you can add { model: xxx, methods: ["get", "post"] } 
-  // methods are (optional) defaults all registered ["get", "post", "put", "delete"] 
-  models.push({ model: dbContext[property] });  
-}
-// finally register your method(s) on base as '/v1/endpoint'
-// base is (optional) context.Resource.register(server, model)
-// port is (optional) context.Resource.register(server, model) if port is not 80 then we bind
+let models = Object.values(db).filter(m => m.tableName).map(model => {
+    // register as options you can add { model: xxx, methods: ['get', 'post'] } 
+    // methods are (optional) defaults all registered ['get', 'post', 'put', 'delete'] 
+    return {model};
+});
+
+// finally register your method(s) on base as '/api/v1/'
+// base is (optional) restful.register(server, model)
+// port is (optional) restful.register(server, model) if port is not 80 then we bind
 // if you use it in local project or port specified on others it will be useful.
-context.Resource.register(server, models, "/v1/endpoint", port);
+restful.register(server, models, '/api/v1', port);
+
 // start serving
-server.listen(port, host, function () {
-  console.log("Server Running...");
+server.listen(port, host, function() {
+    console.log('Server Running...');
 });
 ```
 ### Models ###
 
 in `/model` folder 
 
-as Country.js 
-
+as country.js 
 ```javascript
 'use strict';
+
 module.exports = function(sequelize, DataTypes) {
-  var Country = sequelize.define('Country', {
-    countryName: { type: DataTypes.STRING, allowNull: false }
-  }, {
-    classMethods: {
-      associate: function(models) {
-        Country.hasMany(models.City, { foreignKey: "countryId" });
-        // Country.map is for api will show assosiations
-        Country.map = [models.City];
-      }
-    }
-  });
-  return Country;
+    const Country = sequelize.define('Country', {
+        countryName: {
+            type: DataTypes.STRING,
+            allowNull: false
+        }
+    }, {
+        classMethods: {
+            associate: function(models) {
+                Country.hasMany(models.City, {
+                    foreignKey: 'countryId'
+                });
+
+                // Country.map is for api will show assosiations
+                Country.map = [models.City];
+            }
+        }
+    });
+
+    return Country;
 };
 ```
 
-as City.js 
+as city.js 
 
 ```javascript
 'use strict';
+
 module.exports = function(sequelize, DataTypes) {
-  var City = sequelize.define('City', {
-    cityName: { type: DataTypes.STRING, allowNull: false }
-  }, {
-    classMethods: {
-      associate: function(models) {
-        City.belongsTo(models.Country, { as: "country" });
-      }
-    }
-  });
-  return City;
+    const City = sequelize.define('City', {
+        cityName: {
+            type: DataTypes.STRING,
+            allowNull: false
+        }
+    }, {
+        classMethods: {
+            associate: function(models) {
+                City.belongsTo(models.Country, {
+                    as: 'country'
+                });
+            }
+        }
+    });
+
+    return City;
 };
 ```
 
@@ -101,51 +125,56 @@ as index.js
 
 ```javascript
 'use strict';
-var fs        = require('fs');
-var path      = require('path');
-var Sequelize = require('sequelize');
-var basename  = path.basename(module.filename);
-var config    = require(path.join(__dirname, '../config/config.json'));
+
+const fs        = require('fs');
+const path      = require('path');
+const Sequelize = require('sequelize');
+const basename  = path.basename(module.filename);
+const config    = require(path.join(__dirname, '../config/config.json'));
+
 // placeholder for all
-var dbContext = {};
+let db = {};
+
 // connect
-var sequelize = new Sequelize(config.database, config.username, config.password, config.options);
+const sequelize = new Sequelize(config.database, config.username, config.password, config.options);
+
 // imports everything in this directory into entities and register relations later.
 fs.readdirSync(__dirname)
-  .filter(function(f) {
-    return (f.indexOf('.') !== 0) && (f !== basename) && (f.slice(-3) === '.js');
-  })
-  .forEach(function(f) {
-    var model = sequelize.import(path.join(__dirname, f));
-    dbContext[model.name] = model;  
-  });
+    .filter(function(f) {
+        return (f.indexOf('.') !== 0) && (f !== basename) && (f.slice(-3) === '.js');
+    })
+    .map(f => sequelize.import(path.join(__dirname, f)))
+    .forEach(model => (db[model.name] = model));
+
 // invoke associate methods on models
-Object.keys(dbContext)
-  .forEach(function(key) {
-    if(dbContext[key].associate) {
-      // this will invoke our relationships
-      dbContext[key]associate(dbContext);
-    }
-  });
+Object.values(db)
+    .forEach(function(model) {
+        if (model.associate) {
+            // this will invoke our relationships
+            model.associate(db);
+        }
+    });
+
 // sync context once
 sequelize.sync();
+
 // exports
-module.exports = dbContext;
+module.exports = db;
 ```
 
 ## For More and What we support ##
 
 Registers your database context on restful definitions, and service is created with it at github [link.](https://github.com/droideveloper/RESTfulExample)
 
-For instance your database table is "Frameworks" in mysql registered as `/frameworks` for methods:
+For instance your database table is "Country" in mysql registered as `/country` for methods:
   
-  * GET     /frameworks
-  * GET     /frameworks/:id
-  * POST    /frameworks
-  * PUT     /frameworks/:id
-  * DELETE  /frameworks/:id
+  * GET     /country
+  * GET     /country/:id
+  * POST    /country
+  * PUT     /country/:id
+  * DELETE  /country/:id
 
-and by passing methods args on your registeration in array `["get", "post", "put", "delete"]`
+and by passing methods args on your registeration in array `['get', 'post', 'put', 'delete']`
 you are allowed to manipulate proper methods or register only your needs. P.S. ( as defaults all registered )
 
 supports some default query options;

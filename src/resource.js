@@ -1,8 +1,8 @@
-"use strict";
+'use strict';
 
-const util = require("util");
-const handler = require("./handler");
-const {Router} = require("express");
+const util = require('util');
+const handler = require('./handler');
+const {Router} = require('express');
 
 /**
  * Resource implementation
@@ -44,20 +44,20 @@ Resource.register = function(server, options, base, port) {
  */
 Resource.route = function(option, port) {
     let route = Router();
-    let methods = option.methods || ["get", "post", "put", "delete"];
-    let path = (option.model.getTableName() || "").toLowerCase();
+    let methods = option.methods || ['get', 'post', 'put', 'delete'];
+    let path = (option.model.getTableName() || '').toLowerCase();
 
     methods.forEach(function(method) {
         switch (method.toLowerCase()) {
-            case "get":
+            case 'get':
                 {
-                    [util.format("/%s", path), util.format("/%s/:id", path)].forEach(function(m) {
+                    [util.format('/%s', path), util.format('/%s/:id', path)].forEach(function(m) {
                         route.get(m, function(req, res) {
                             if (port) {
                                 req.xport = port;
                             }
 
-                            if (m.indexOf("/:id") === -1) {
+                            if (m.indexOf('/:id') === -1) {
                                 handler.all.on(req, res, option.model);
                             }
                             else {
@@ -68,9 +68,9 @@ Resource.route = function(option, port) {
 
                     break;
                 }
-            case "post":
+            case 'post':
                 {
-                    [util.format("/%s", path)].forEach(function(m) {
+                    [util.format('/%s', path)].forEach(function(m) {
                         route.post(m, function(req, res) {
                             if (port) {
                                 req.xport = port;
@@ -80,9 +80,9 @@ Resource.route = function(option, port) {
                     });
                     break;
                 }
-            case "put":
+            case 'put':
                 {
-                    [util.format("/%s/:id", path)].forEach(function(m) {
+                    [util.format('/%s/:id', path)].forEach(function(m) {
                         route.put(m, function(req, res) {
                             if (port) {
                                 req.xport = port;
@@ -92,9 +92,9 @@ Resource.route = function(option, port) {
                     });
                     break;
                 }
-            case "delete":
+            case 'delete':
                 {
-                    [util.format("/%s/:id", path)].forEach(function(m) {
+                    [util.format('/%s/:id', path)].forEach(function(m) {
                         route.delete(m, function(req, res) {
                             if (port) {
                                 req.xport = port;
@@ -108,8 +108,8 @@ Resource.route = function(option, port) {
                 {
                     throw {
                         status: 404,
-                        message: "not supported method.",
-                        name: "NotFound"
+                        message: 'not supported method.',
+                        name: 'NotFound'
                     };
                 }
         }
