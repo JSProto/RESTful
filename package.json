@@ -3,7 +3,6 @@
   "version": "1.2.1",
   "description": "Using Sequelize ORM for Express RESTful Services (Endpoints)",
   "main": "index.js",
-  "types": "index.d.ts",
   "readme": "README.md",
   "repository": {
     "type": "git",
@@ -18,15 +17,9 @@
   "author": "Fatih ŞEN",
   "license": "MIT",
   "dependencies": {
-    "@types/node": "^7.0.12",
-    "@types/sequelize": "^4.0.49",
     "express": "^4.15.2",
     "rxjs": "^5.2.0",
     "sequelize": "^3.30.4"
   },
-  "devDependencies": {
-    "@types/express": "^4.0.35",
-    "@types/node": "^7.0.4",
-    "@types/sequelize": "^4.0.39"
-  }
+  "devDependencies": {}
 }
