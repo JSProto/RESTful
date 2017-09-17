@@ -25,38 +25,39 @@ let toWhere = function(key, value) {
 /**
  * Implementation of SObject
  */
-const Objectify = (function() {
-    function Objectify() {}
-    Objectify.prototype.on = function(data) {
+class Objectify {
+    on (data) {
         return JSON.parse(JSON.stringify(data));
-    };
-    return Objectify;
-}());
+    }
+}
+
 
 /**
  * Implementation of SQuery for ?fields=x,y,z
  */
-const Selectify = (function() {
-    function Selectify() {}
-
-    Selectify.prototype.on = function(req, data) {
-        if (req.query.fields && !req.query.field) {
-            return untyped.validate(data, untyped.parse(req.query.fields));
+class Selectify {
+    on (req, data) {
+        const fields = req.query.fields;
+        if (fields) {
+            if (Array.isArray(data)) {
+                return data.map(entity => this.filter(fields, entity));
+            }
+            return this.filter(fields, data);
         }
         return data;
-    };
+    }
 
-    return Selectify;
-}());
+    filter(properties, entity){
+        return untyped.validate(entity, untyped.parse(properties));
+    }
+}
 
 /**
  * Implementation of SQuery for ?sort=x,desc
  */
-const Sortify = (function() {
-    function Sortify() {}
-
-    Sortify.prototype.on = function(req, data) {
-        let sortArgs = this.sorts(req);
+class Sortify {
+    on (req, data) {
+        let sortArgs = this.sorts(req.query.sort);
 
         if (sortArgs.property) {
             let filter = function(l, r) {
@@ -82,30 +83,23 @@ const Sortify = (function() {
         }
 
         return data;
-    };
+    }
 
-    /**
-     * sort property and type from query of request.
-     */
-    Sortify.prototype.sorts = function(req) {
-        let args = (req.query.sort || '').split(',').map(sort => sort.trim());
+    sorts (query) {
+        let [property, desc = 'asc'] = (query || '').split(',').map(sort => sort.trim());
 
         return {
-            property: args[0] || '',
-            desc: (args[1] || 'asc').toLowerCase() === 'desc'
+            property,
+            desc: desc.toLowerCase() === 'desc'
         };
-    };
-
-    return Sortify;
-}());
+    }
+}
 
 /**
  * Implementation of SQuery for $href property
  */
-const Urlify = (function() {
-    function Urlify() {}
-
-    Urlify.prototype.on = function(req, data) {
+class Urlify {
+    on (req, data) {
         if (_.isArray(data)) {
             return data.map(entity => {
                 if (!entity.href) {
@@ -115,17 +109,17 @@ const Urlify = (function() {
             });
         }
 
-        if (_.isPlainObject(data) && !data.href) {
+        if (!data.href) {
             data.href = this.object(req, data);
         }
 
         return data;
-    };
+    }
 
     /**
      * create object href.
      */
-    Urlify.prototype.object = function(req, data) {
+    object (req, data) {
         let xport = req.xport || 80;
         let url;
 
@@ -156,12 +150,12 @@ const Urlify = (function() {
         }
 
         return url.concat(req.url, '/', data.id);
-    };
+    }
 
     /**
      * create collection of object href.
      */
-    Urlify.prototype.collection = function(req, count) {
+    collection (req, count) {
         let xport = req.xport || 80;
         let uri;
         let collectionArgs = {
@@ -191,19 +185,12 @@ const Urlify = (function() {
         }
 
         return collectionArgs;
-    };
-
-    /**
-     * controls if uri has previously query.
-     */
-    Urlify.prototype.hasPreviousQuery = function(uri) {
-        return uri && uri.indexOf('?') === -1;
-    };
+    }
 
     /**
      * read properties on query and write them again, as long as it is not `offset`
      */
-    Urlify.prototype.properties = function(uri, query, offset) {
+    properties (uri, query, offset) {
 
         for (let property in query) {
             if (query.hasOwnProperty(property)) {
@@ -212,10 +199,16 @@ const Urlify = (function() {
         }
 
         return uri;
-    };
+    }
 
-    return Urlify;
-}());
+    /**
+     * controls if uri has previously query.
+     */
+    hasPreviousQuery (uri) {
+        return uri && uri.indexOf('?') === -1;
+    }
+}
+
 
 let objectify = new Objectify();
 let selectify = new Selectify();
@@ -225,10 +218,8 @@ let urlify = new Urlify();
 /**
  * Implementation of SRequest for All.
  */
-const All = (function() {
-    function All() {}
-
-    All.prototype.on = function(req, res, model) {
+class All {
+    on (req, res, model) {
         let served = false;
         let where = {};
         let options = {
@@ -313,8 +304,8 @@ const All = (function() {
 
         Observable.fromPromise(query)
             .map(entities => objectify.on(entities))
-            .map(entities => urlify.on(req, entities))
             .map(entities => selectify.on(req, entities))
+            .map(entities => urlify.on(req, entities))
             .map(entities => sortify.on(req, entities))
             .map(entities => {
 
@@ -338,10 +329,8 @@ const All = (function() {
                 return response;
             })
             .subscribe(response => res.json(response), onError);
-    };
-
-    return All;
-}());
+    }
+}
 
 /**
  * Implementation of SRequest for Detail.
@@ -349,10 +338,8 @@ const All = (function() {
  *  - idKey: string
  *  - includeModels: Array<orm.Model<?, ?>>
  */
-const Detail = (function() {
-    function Detail() {}
-
-    Detail.prototype.on = function(req, res, model) {
+class Detail {
+    on (req, res, model) {
         let served = false;
         let objectId = req.params.id;
 
@@ -386,24 +373,12 @@ const Detail = (function() {
             options.include = model.map;
         }
 
-        if ('field' in req.params) {
-            if (req.params.field in model.attributes) {
-                options.attributes = [req.params.field];
-            }
-            else {
-                throw Exception(req.baseUrl, Exception.UNKNOWN_FIELD);
-            }
-        }
-
         // ?fields=
-        else if ('fields' in req.query) {
+        if ('fields' in req.query) {
             options.attributes = _.uniq(_.keys(untyped.parse(req.query.fields)).concat(['id']));
         }
 
         let query = model.findById(objectId, options).catch(onError).then(function(result){
-
-            if (req.params.field) return result[req.params.field];
-
             return Promise.all(foreignKeys.map(foreignkey => {
                 let {references: {key}, attribute} = foreignkey;
                 let value = result.dataValues[attribute];
@@ -446,18 +421,15 @@ const Detail = (function() {
                 };
             })
             .subscribe(response => res.json(response), onError);
-    };
+    }
+}
 
-    return Detail;
-}());
 
 /**
  * Implementation of SRequest for Create.
  */
-const Create = (function() {
-    function Create() {}
-
-    Create.prototype.on = function(req, res, model) {
+class Create {
+    on (req, res, model) {
         let served = false;
         let object = req.body;
 
@@ -491,18 +463,14 @@ const Create = (function() {
                 };
             })
             .subscribe(response => res.json(response), onError);
-    };
-
-    return Create;
-}());
+    }
+}
 
 /**
  * Implementation of SRequest for Update.
  */
-const Update = (function() {
-    function Update() {}
-
-    Update.prototype.on = function(req, res, model) {
+class Update {
+    on (req, res, model) {
         let served = false;
         let objectId = req.params.id;
         let object = req.body;
@@ -546,18 +514,14 @@ const Update = (function() {
                 };
             })
             .subscribe(response => res.json(response), onError);
-    };
-
-    return Update;
-}());
+    }
+}
 
 /**
  * Implementation of SRequest for Remove.
  */
-const Remove = (function() {
-    function Remove() {}
-
-    Remove.prototype.on = function(req, res, model) {
+class Remove {
+    on (req, res, model) {
         let served = false;
         let objectId = req.params.id;
 
@@ -598,10 +562,9 @@ const Remove = (function() {
                 };
             })
             .subscribe(response => res.json(response), onError);
-    };
+    }
+}
 
-    return Remove;
-}());
 
 
 /**

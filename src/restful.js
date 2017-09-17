@@ -1,18 +1,15 @@
 'use strict';
 
 const util = require('util');
-const handler = require('./handler');
 const {Router} = require('express');
+const handler = require('./handler');
 
-/**
- * Resource implementation
- */
-function RESTful() {}
+const RESTful = module.exports = {};
 
 /**
  * Register as array or single
  */
-RESTful.register = function(server, options, baseUrl, port) {
+RESTful.register = function (server, options, baseUrl, port) {
 
     options.forEach(function(option) {
         let resource = RESTful.route(option, port);
@@ -36,13 +33,12 @@ RESTful.register = function(server, options, baseUrl, port) {
 /**
  * create route from option
  */
-RESTful.route = function(option, port) {
+RESTful.route = function (option, port) {
     let router = Router();
     let path = (option.model.getTableName() || '').toLowerCase();
     let methods = option.methods || ['get', 'post', 'put', 'patch', 'delete'];
     let collection = util.format('/%s', path);
     let resource = util.format('/%s/:id', path);
-    let field = util.format('/%s/:id/:field', path);
     let setXport = function(req, res, next){
         if (port) {
             req.xport = port;
@@ -60,7 +56,7 @@ RESTful.route = function(option, port) {
     methods.forEach(function(method) {
         switch (method.toLowerCase()) {
             case 'get':
-                [collection, resource, field].forEach(function(route) {
+                [collection, resource].forEach(function(route) {
                     router.get(route, setXport, function(req, res) {
                         if (route.indexOf('/:id') === -1) {
                             handler.all.on(req, res, option.model);
@@ -109,5 +105,3 @@ RESTful.route = function(option, port) {
 
     return router;
 };
-
-module.exports = RESTful;
