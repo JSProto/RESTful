@@ -12,19 +12,13 @@ function RESTful() {}
 /**
  * Register as array or single
  */
-RESTful.register = function(server, options, base, port) {
+RESTful.register = function(server, options, baseUrl, port) {
+
     options.forEach(function(option) {
-        let resource = null;
+        let resource = RESTful.route(option, port);
 
-        if (port) {
-            resource = RESTful.route(option, port)
-        }
-        else {
-            resource = RESTful.route(option)
-        }
-
-        if (base) {
-            server.use(base, resource);
+        if (baseUrl) {
+            server.use(baseUrl, resource);
         }
         else {
             server.use(resource);
@@ -55,6 +49,13 @@ RESTful.route = function(option, port) {
         }
         next();
     };
+
+    // _.values(errors).forEach(function({slug, description}) {
+    //     api.get('/error/' + slug, function(req, res, next) {
+    //         res.json({description});
+    //         next();
+    //     });
+    // });
 
     methods.forEach(function(method) {
         switch (method.toLowerCase()) {
@@ -100,8 +101,8 @@ RESTful.route = function(option, port) {
             default:
                 throw {
                     status: 404,
-                    message: 'not supported method.',
-                    name: 'NotFound'
+                    name: 'NotFound',
+                    message: 'not supported method.'
                 };
         }
     });

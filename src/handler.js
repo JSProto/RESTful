@@ -13,6 +13,7 @@ require('rxjs/add/operator/timeout');
 require('rxjs/add/operator/concatMap');
 require('rxjs/add/operator/mergeMap');
 
+const Exception = require('./errors');
 
 /**
  * parse key-value
@@ -39,7 +40,7 @@ const Selectify = (function() {
     function Selectify() {}
 
     Selectify.prototype.on = function(req, data) {
-        if (req.query.fields) {
+        if (req.query.fields && !req.query.field) {
             return untyped.validate(data, untyped.parse(req.query.fields));
         }
         return data;
@@ -105,7 +106,7 @@ const Urlify = (function() {
     function Urlify() {}
 
     Urlify.prototype.on = function(req, data) {
-        if (Array.isArray(data)) {
+        if (_.isArray(data)) {
             return data.map(entity => {
                 if (!entity.href) {
                     entity.href = this.object(req, entity);
@@ -114,7 +115,7 @@ const Urlify = (function() {
             });
         }
 
-        if (!data.href) {
+        if (_.isPlainObject(data) && !data.href) {
             data.href = this.object(req, data);
         }
 
@@ -236,6 +237,17 @@ const All = (function() {
             include: model.map || []
         };
 
+        let onError = function (error) {
+            if (!served) {
+                res.json({
+                    code: 400,
+                    message: error.name || 'database error',
+                    data: error.message || 'error occured in database transaction'
+                });
+            }
+            served = true;
+        };
+
         // ?:field=
         _.keys(_.omit(model.attributes, 'createdAt', 'updatedAt')).forEach(function(attribute) {
             ['', '~', '|', '^', '$', '*'].forEach(function(match) {
@@ -297,14 +309,7 @@ const All = (function() {
             options.attributes = _.keys(untyped.parse(req.query.fields)).concat(['id']);
         }
 
-        let query = model.all(options).catch(function(error) {
-            served = true;
-            res.json({
-                status: 400,
-                message: error.name || 'database error',
-                data: error.message || 'error occured in database transaction'
-            });
-        });
+        let query = model.all(options).catch(onError);
 
         Observable.fromPromise(query)
             .map(entities => objectify.on(entities))
@@ -332,15 +337,7 @@ const All = (function() {
 
                 return response;
             })
-            .subscribe(response => res.json(response), function(error) {
-                if (!served) {
-                    res.json({
-                        status: 400,
-                        message: error.name || 'database error',
-                        data: error.message || 'error occured in database transaction'
-                    });
-                }
-            });
+            .subscribe(response => res.json(response), onError);
     };
 
     return All;
@@ -356,36 +353,72 @@ const Detail = (function() {
     function Detail() {}
 
     Detail.prototype.on = function(req, res, model) {
+        let served = false;
         let objectId = req.params.id;
 
         if (!objectId) {
-            throw {
-                status: 400,
-                message: 'invalid object id, check param id.',
-                name: 'InvalidObjectId'
-            };
+            throw Exception(req.baseUrl, Exception.UNKNOWN_OBJECT_ID);
         }
 
-        let served = false;
+        let onError = function (error) {
+            if (!served) {
+                res.json({
+                    code: 400,
+                    reason: error.reason || '',
+                    name: error.name || 'database error',
+                    message: error.message || 'error occured in database transaction',
+                });
+            }
+            served = true;
+        };
+
+        let foreignKeys = _.entries(model.attributes)
+            .filter(([,o]) => 'references' in o)
+            .map(([attribute, {references}]) => ({
+                attribute,
+                references,
+                model: _.find(model.sequelize.models, m => (m.getTableName() === references.model))
+            }));
+
         let options = {};
 
         if (model.map) {
             options.include = model.map;
         }
 
+        if ('field' in req.params) {
+            if (req.params.field in model.attributes) {
+                options.attributes = [req.params.field];
+            }
+            else {
+                throw Exception(req.baseUrl, Exception.UNKNOWN_FIELD);
+            }
+        }
+
         // ?fields=
-        if ('fields' in req.query) {
+        else if ('fields' in req.query) {
             options.attributes = _.uniq(_.keys(untyped.parse(req.query.fields)).concat(['id']));
         }
 
-        let query = model.findById(objectId, options).catch(function(error) {
-                served = true;
-                res.json({
-                    status: 400,
-                    message: error.name || 'database error',
-                    data: error.message || 'error occured in database transaction'
+        let query = model.findById(objectId, options).catch(onError).then(function(result){
+
+            if (req.params.field) return result[req.params.field];
+
+            return Promise.all(foreignKeys.map(foreignkey => {
+                let {references: {key}, attribute} = foreignkey;
+                let value = result.dataValues[attribute];
+                return foreignkey.model.findOne({
+                    where: _.set({}, key, value)
                 });
+            }))
+            .then(function(foreignValues) {
+                _.zip(foreignKeys, foreignValues).forEach(([{attribute}, value]) => {
+                    result.dataValues[attribute] = value;
+                });
+                return result;
             });
+
+        });
 
         Observable.fromPromise(query)
             .map(entity => objectify.on(entity))
@@ -412,15 +445,7 @@ const Detail = (function() {
                     data: entity
                 };
             })
-            .subscribe(response => res.json(response), function(error) {
-                if (!served) {
-                    res.json({
-                        status: 400,
-                        message: error.name || 'database error',
-                        data: error.message || 'error occured in database transaction'
-                    });
-                }
-            });
+            .subscribe(response => res.json(response), onError);
     };
 
     return Detail;
@@ -433,25 +458,26 @@ const Create = (function() {
     function Create() {}
 
     Create.prototype.on = function(req, res, model) {
+        let served = false;
         let object = req.body;
 
         if (_.isEmpty(object)) {
-            throw {
-                status: 400,
-                message: 'invalid object',
-                name: 'InvalidObject'
-            };
+            throw Exception(req.baseUrl, Exception.UNKNOWN_OBJECT_ID);
         }
 
-        let served = false;
-        let query = model.create(object).catch(function(error) {
-                served = true;
+        let onError = function (error) {
+            if (!served) {
                 res.json({
-                    status: 400,
+                    code: 400,
+                    reason: error.reason || '',
                     message: error.name || 'database error',
                     data: error.message || 'error occured in database transaction'
                 });
-            });
+            }
+            served = true;
+        };
+
+        let query = model.create(object).catch(onError);
 
         Observable.fromPromise(query)
             .map(entity => objectify.on(entity))
@@ -464,15 +490,7 @@ const Create = (function() {
                     data: entity
                 };
             })
-            .subscribe(response => res.json(response), function(error) {
-                if (!served) {
-                    res.json({
-                        status: 400,
-                        message: error.name || 'database error',
-                        data: error.message || 'error occured in database transaction'
-                    });
-                }
-            });
+            .subscribe(response => res.json(response), onError);
     };
 
     return Create;
@@ -485,32 +503,38 @@ const Update = (function() {
     function Update() {}
 
     Update.prototype.on = function(req, res, model) {
-        let objectId = parseInt(req.params.id || 0);
+        let served = false;
+        let objectId = req.params.id;
         let object = req.body;
 
-        if (!objectId && _.isEmpty(object)) {
-            throw {
-                status: 400,
-                message: 'no such object exists.',
-                name: 'NoSuchObjectExists.'
-            };
+        if (!objectId) {
+            throw Exception(req.baseUrl, Exception.UNKNOWN_OBJECT_ID);
+        }
+        if (_.isEmpty(object)) {
+            throw Exception(req.baseUrl, Exception.UNKNOWN_UPDATE_DATA);
         }
 
-        let served = false;
-        let where = toWhere(model.primaryKeyName || 'id', objectId);
-
-        if (model.map) {
-            where.include = model.map;
-        }
-
-        let query = model.update(object, where).catch(function(error) {
-                served = true;
+        let onError = function (error) {
+            if (!served) {
                 res.json({
-                    status: 400,
+                    code: 400,
+                    reason: error.reason || '',
                     message: error.name || 'database error',
                     data: error.message || 'error occured in database transaction'
                 });
-            })
+            }
+            served = true;
+        };
+
+        let options = {
+            where: toWhere(model.primaryKeyName || 'id', objectId)
+        };
+
+        if (model.map) {
+            options.include = model.map;
+        }
+
+        let query = model.update(object, options).catch(onError)
 
         Observable.fromPromise(query)
             .concatMap(count => count)
@@ -521,15 +545,7 @@ const Update = (function() {
                     data: count
                 };
             })
-            .subscribe(response => res.json(response), function(error) {
-                if (!served) {
-                    res.json({
-                        status: 400,
-                        message: error.name || 'database error',
-                        data: error.message || 'error occured in database transaction'
-                    });
-                }
-            });
+            .subscribe(response => res.json(response), onError);
     };
 
     return Update;
@@ -542,31 +558,36 @@ const Remove = (function() {
     function Remove() {}
 
     Remove.prototype.on = function(req, res, model) {
-        let objectId = parseInt(req.params.id || 0);
+        let served = false;
+        let objectId = req.params.id;
 
         if (!objectId) {
-            throw {
-                status: 400,
-                message: 'no such object exists.',
-                name: 'NoSuchObjectExists.'
-            };
+            throw Exception(req.baseUrl, Exception.UNKNOWN_OBJECT_ID);
         }
 
-        let served = false;
-        let where = toWhere(model.primaryKeyName || 'id', objectId);
-
-        if (model.map) {
-            where.include = model.map;
-        }
-
-        let query = model.destroy(where).catch(function(error) {
-                served = true;
+        let onError = function (error) {
+            if (!served) {
                 res.json({
-                    status: 400,
+                    code: 400,
+                    reason: error.reason || '',
                     message: error.name || 'database error',
                     data: error.message || 'error occured in database transaction'
                 });
-            });
+            }
+            served = true;
+        };
+
+        let options = {
+            where: toWhere(model.primaryKeyName || 'id', objectId),
+            truncate: true,
+            cascade: true
+        }
+
+        if (model.map) {
+            options.include = model.map;
+        }
+
+        let query = model.destroy(options).catch(onError);
 
         Observable.fromPromise(query)
             .map(function(count) {
@@ -576,15 +597,7 @@ const Remove = (function() {
                     data: count
                 };
             })
-            .subscribe(response => res.json(response), function(error) {
-                if (!served) {
-                    res.json({
-                        status: 400,
-                        message: error.name || 'database error',
-                        data: error.message || 'error occured in database transaction'
-                    });
-                }
-            });
+            .subscribe(response => res.json(response), onError);
     };
 
     return Remove;
@@ -614,16 +627,18 @@ module.exports = {
 
     error404: function(req, res, next) {
         next({
-            status: 404,
+            code: 404,
             message: 'no such url exists.',
             name: 'NotFound.'
         });
     },
     error500: function(error, req, res, next) {
+
         res.json({
-            code: error.status || 500,
-            message: error.name || 'ServerError',
-            data: error.message || 'internal server error'
+            code: error.code || 500,
+            name: error.name || 'ServerError',
+            reason: error.reason || '',
+            message: error.message || 'internal server error',
         });
     }
 };
